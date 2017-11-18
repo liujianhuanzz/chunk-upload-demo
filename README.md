@@ -18,9 +18,9 @@ A Simple Demo for Chunk-Upload Based on Koa and HTML5 File API
 
     打开浏览器
 
-    查看demo1： http://localhost:3000/index.html
+    查看demo1： http://localhost:3000/index
 
-    查看demo2： http://localhost:3000/index-upload.html
+    查看demo2： http://localhost:3000/index-upload
 
 ### 详细介绍
 
