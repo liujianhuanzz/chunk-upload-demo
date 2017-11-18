@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <script src="http://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <script src="http://apps.bdimg.com/libs/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+    <script src="https://cdn.bootcss.com/spark-md5/3.0.0/spark-md5.min.js"></script>
+    <link rel="stylesheet" href="http://apps.bdimg.com/libs/bootstrap/3.3.4/css/bootstrap.min.css">
+    <title>HTML5 文件分段上传</title>
+    <style>
+    .container{
+        width: 800px;
+    }
+    .progress {
+        position: relative;
+    }
+    .progress-bar {
+        transition: width .3s ease
+    }
+    .progress .value {
+        position: absolute;
+        color: #FF9800;
+        left: 50%;
+    }
+    .row {
+        border-bottom: 1px solid gray;
+        padding: 10px;
+    }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row">
+            <div class="col-md-12">
+                <form class="form-inline" role="form">
+                    <div class="form-group">
+                        <label class="form-label">选择文件: </label>
+                        <input type="file" class="form-control" id="fileinput">
+                    </div>
+                    <div class="form-group">
+                        <a id="submit" class="btn btn-xs btn-primary">SUBMIT</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="row" id="process1" style="display: none">
+            <div class="col-md-4">校验文件进度</div>
+            <div class="col-md-8">
+                <div class="progress">
+                    <div id="checkProcessStyle1" class="progress-bar" style="width:0%"></div>
+                    <p id="checkProcessValue1" class="value">0%</p>
+                </div>
+            </div>
+        </div>
+        <div class="row" id="process2" style="display: none">
+            <div class="col-md-4">上传文件进度</div>
+            <div class="col-md-8">
+                <div class="progress">
+                    <div id="uploadProcessStyle2" class="progress-bar" style="width:0%"></div>
+                    <p id="uploadProcessValue2" class="value">0%</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+    let baseUrl = 'http://localhost:3000'
+    let chunkSize = 1 * 1024 * 1024
+    let fileSize = 0
+    let file = null
+    let hasUploaded = 0
+    let chunks = 0
+    $("body").on("click", "#submit", function(){
+        let files = document.querySelector("#fileinput").files;
+        if(!files.length){
+            alert("当前没有选择文件");
+            return false;
+        }    
+        file = files[0];
+        fileSize = file.size;
+        startUpload(file);  
+    })
+    //0. 响应点击
+    async function startUpload(file){
+        //校验文件
+        $("#process1").slideDown(200);
+        //生成文件MD5
+        let fileMd5Value = await md5File(file);
+        console.log(fileMd5Value);
+        //校验文件是否已存在
+        let result = await checkFile(file.name, fileMd5Value);
+        if(result.file){
+            alert("文件已秒传成功");
+            return false;
+        }
+        //文件上传
+        $("#process2").slideDown(200);
+        //检查所有分块是否都上传完毕
+        await checkAndUploadChunk(fileMd5Value, result.chunkList);
+        // 合并分块
+        mergeChunk(fileMd5Value);
+    }
+
+    //1. 文件MD5
+    function md5File(file){
+        return new Promise((resolve, reject) => {
+            var blobSlice = File.prototype.slice || File.prototype.webkitSlice || File.prototype.mozSlice,
+                chunkSize = file.size / 100,
+                chunks = 100,
+                currentChunk = 0,
+                spark = new SparkMD5.ArrayBuffer(),
+                fileReader = new FileReader();
+
+            fileReader.onload = function(e){
+                spark.append(this.result);
+                currentChunk++;
+
+                if(currentChunk < chunks){
+                    loadNext();
+                }else{
+                    resolve(spark.end());
+                }
+            }
+
+            function loadNext(){
+                let start = currentChunk * chunkSize,
+                    end = ((start + chunkSize) >= file.size) ? file.size : (start + chunkSize);
+                
+                fileReader.readAsArrayBuffer(blobSlice.apply(file, [start, end]));
+                $("#checkProcessStyle1").css({width: (currentChunk + 1) + '%'})
+                $("#checkProcessValue1").html((currentChunk + 1) + '%');
+            }
+
+            loadNext();
+        })
+    }
+    //2. 校验文件是否已存在
+    function checkFile(fileName, fileMd5Value){
+        return new Promise((resolve, reject) => {
+            let url = `${baseUrl}/check/file?fileName=${fileName}&fileMd5Value=${fileMd5Value}`;
+            $.get(url, data => {
+                resolve(data);
+            })
+        })
+    }
+    //3. 检查已上传分块，上传未上传分块
+    async function checkAndUploadChunk(fileMd5Value, chunkList){
+        console.log(chunkList)
+        chunks = Math.ceil(fileSize / chunkSize);
+        hasUploaded = chunkList.length;
+        for(let i = 0; i < chunks; i++){
+            let existChunk = chunkList.indexOf(i + "") > -1;
+            //存在则不再上传
+            if(!existChunk){
+                await uploadChunk(i, fileMd5Value, chunks);
+                hasUploaded++
+                //计算百分比
+                let percent = Math.floor((hasUploaded / chunks) * 100) + '%';
+                $("#uploadProcessStyle2").css({width: percent});
+                $("#uploadProcessValue2").html(percent);
+            }
+        }
+    }
+    //4. 上传分块
+    function uploadChunk(i, fileMd5Value, chunks){
+        return new Promise((resolve, reject) => {
+            let end = (i + 1) * chunkSize >= file.size ? file.size : (i + 1) * chunkSize;
+            //构建一个表单
+            let form = new FormData()
+            form.append("data", file.slice(i * chunkSize, end));
+            form.append("totalChunks", chunks);
+            form.append("currChunk", i);
+            form.append("fileMd5Value", fileMd5Value);
+
+            let url = `${baseUrl}/upload`;
+            $.ajax({
+                url: url,
+                type: "post",
+                data: form,
+                async: true,
+                processData: false,
+                contentType:false,
+                success: function(data){
+                    console.log(data);
+                    resolve(data);
+                }
+            })
+        })
+    }
+
+    //5. 合并分块
+    function mergeChunk(fileMd5Value){
+        let url = `${baseUrl}/mergeChunk?md5=${fileMd5Value}&fileName=${file.name}&size=${file.size}`;
+        $.get(url, function(data){
+            alert('上传成功');
+        })
+    }
+
+    $("#fileinput").on("change", function(){
+        $("#checkProcessStyle1").css({width: '0%'})
+        $("#checkProcessValue1").html('0%');
+        $("#checkProcessStyle2").css({width: '0%'})
+        $("#checkProcessValue2").html('0%');
+        $("#process1").slideUp(200);
+        $("#process2").slideUp(200);
+    })
+    </script>
+</body>
+</html>
