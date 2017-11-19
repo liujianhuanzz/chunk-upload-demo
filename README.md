@@ -24,4 +24,4 @@ A Simple Demo for Chunk-Upload Based on Koa and HTML5 File API
 
 ### 详细介绍
 
-敬请期待
+关于本Demo的一些介绍，可以猛戳 **[大文件分块上传的前后端实现](http://www.hhspace.cn/?p=441)** 
